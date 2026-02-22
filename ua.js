@@ -1,37 +1,32 @@
-/**
- * UA Sources – Lampa Plugin
- * Джерела: uaserials.com | kinoukr.tv | uakino.best
- *
- * Встановлення: Lampa → Налаштування → Плагіни → вставте URL цього файлу
- */
-
 (function () {
     'use strict';
 
-    var PLUGIN_NAME = 'ua_sources';
+    var PLUGIN_NAME = 'ua_films';
 
-    // ─── Список джерел ────────────────────────────────────────────────────────
     var SOURCES = [
         {
             id:     'uaserials',
             name:   'UA Serials',
             color:  '#e74c3c',
             base:   'https://uaserials.com',
-            search: 'https://uaserials.com/?do=search&subaction=search&story='
+            search: 'https://uaserials.com/?do=search&subaction=search&story=',
+            browse: 'https://uaserials.com/'
         },
         {
             id:     'kinoukr',
             name:   'KinoUkr',
             color:  '#3498db',
             base:   'https://kinoukr.tv',
-            search: 'https://kinoukr.tv/?do=search&subaction=search&story='
+            search: 'https://kinoukr.tv/?do=search&subaction=search&story=',
+            browse: 'https://kinoukr.tv/filmss/'
         },
         {
             id:     'uakino',
             name:   'UA Kino',
             color:  '#27ae60',
             base:   'https://uakino.best',
-            search: 'https://uakino.best/?do=search&subaction=search&story='
+            search: 'https://uakino.best/?do=search&subaction=search&story=',
+            browse: 'https://uakino.best/filmy/'
         }
     ];
 
@@ -41,7 +36,7 @@
         if (Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.corsUrl) {
             return Lampa.Api.sources.corsUrl(url);
         }
-        return url;
+        return 'https://cors-anywhere.herokuapp.com/' + url;
     }
 
     function fetchHtml(url, success, fail) {
@@ -56,32 +51,56 @@
 
     function parseItems(html, source) {
         var results = [];
-        // DLE-патерн: клас short-блоку + img + title
-        var re = /<a[^>]+href=["']([^"']+)["'][^>]*class=["'][^"']*short[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
-        var m;
-        while ((m = re.exec(html)) !== null) {
-            var block  = m[0];
-            var href   = m[1];
-            var imgM   = block.match(/<img[^>]+src=["']([^"']+)["']/i);
-            var titleM = block.match(/title=["']([^"']+)["']/i)
-                      || block.match(/<[^>]+class=["'][^"']*title[^"']*["'][^>]*>([^<]+)<\//i);
+        var parser  = new DOMParser();
+        var doc     = parser.parseFromString(html, 'text/html');
 
-            var poster = imgM   ? imgM[1]         : '';
-            var title  = titleM ? titleM[1].trim() : '';
+        // Пробуємо різні типові DLE-селектори
+        var cards = doc.querySelectorAll(
+            '.short-story, .movie-item, .th-item, .item, article.card, .film-item, [class*="short"]'
+        );
 
-            if (!title) {
-                var plain = block.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-                title = plain.substring(0, 60) || source.name;
-            }
+        cards.forEach(function (el) {
+            var linkEl  = el.querySelector('a[href]');
+            var imgEl   = el.querySelector('img');
+            var titleEl = el.querySelector('.title, .th-title, h2, h3, [class*="title"]');
 
-            if (href && !href.startsWith('http')) {
+            if (!linkEl) return;
+
+            var href  = linkEl.getAttribute('href') || '';
+            var img   = imgEl ? (imgEl.getAttribute('data-src') || imgEl.getAttribute('src') || '') : '';
+            var title = titleEl ? titleEl.textContent.trim()
+                                : (linkEl.getAttribute('title') || linkEl.textContent.trim());
+
+            if (!href) return;
+            if (!href.startsWith('http')) {
                 href = source.base + '/' + href.replace(/^\/+/, '');
             }
-            if (href && href.startsWith('http')) {
-                results.push({ title: title, poster: poster, url: href, source: source });
+            // Відсіюємо небажані посилання (категорії, теги тощо)
+            if (href === source.base + '/' || href === source.base) return;
+
+            // Якщо немає заголовка — пропускаємо
+            if (!title || title.length < 2) return;
+
+            results.push({
+                title:  title.substring(0, 80),
+                poster: img,
+                url:    href,
+                source: source
+            });
+        });
+
+        // Fallback: якщо DOM-парсер нічого не знайшов — regex по href
+        if (!results.length) {
+            var re = /<a[^>]+href=["']([^"']*(?:\/\d{4,}\/|\/film|\/serial|\/movie)[^"']*)["'][^>]*title=["']([^"']+)["'][^>]*>/gi;
+            var m;
+            while ((m = re.exec(html)) !== null) {
+                var href2 = m[1];
+                if (!href2.startsWith('http')) href2 = source.base + '/' + href2.replace(/^\/+/, '');
+                results.push({ title: m[2].trim(), poster: '', url: href2, source: source });
             }
         }
-        return results.slice(0, 15);
+
+        return results.slice(0, 20);
     }
 
     function extractPlayer(html) {
@@ -89,7 +108,8 @@
             /iframe[^>]+src=["']([^"']*(?:moonwalk|ashdi|tortuga|kodik|hdvb|streamguard|videoscdn|cdnvideo|player)[^"']*)["']/i,
             /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i,
             /(?:file|url|src)\s*:\s*["']([^"']+\.mp4[^"']*)["']/i,
-            /<source[^>]+src=["']([^"']+\.mp4[^"']*)["']/i
+            /<source[^>]+src=["']([^"']+\.mp4[^"']*)["']/i,
+            /playerjs[^;]*file\s*:\s*["']([^"']+)["']/i
         ];
         for (var i = 0; i < patterns.length; i++) {
             var m = html.match(patterns[i]);
@@ -98,38 +118,77 @@
         return null;
     }
 
-    // ─── Компонент сторінки пошуку ────────────────────────────────────────────
+    // ─── Компонент ────────────────────────────────────────────────────────────
 
-    function SearchComponent(object) {
-        var _this = this;
-        var movie = object.movie || {};
-        var query = (movie.title || movie.original_title || '').trim();
+    function FilmsComponent(object) {
+        var _this  = this;
+        var movie  = object.movie  || {};
+        var mode   = object.mode   || 'search'; // 'search' | 'browse'
+        var source = object.source || null;
+        var query  = (movie.title || movie.original_title || '').trim();
 
         this.create = function () {
-            // Lampa надає базовий шаблон; якщо немає – ліпимо свій div
             try {
                 _this.html = Lampa.Template.js('info', {});
             } catch (e) {
-                _this.html = $('<div class="ua-page"></div>');
+                _this.html = $('<div class="uaf-page"></div>');
             }
 
-            _this.html.find('.info__body, .ua-page').html(
-                '<div class="ua-loading">🔍 Пошук«' + (query || '…') + '»</div>'
-            );
+            _this.body().html('<div class="uaf-loading">⏳ Завантаження…</div>');
 
-            if (query) {
+            if (mode === 'browse' && source) {
+                _this.doBrowse(source);
+            } else if (query) {
                 _this.doSearch();
             } else {
-                _this.showPrompt();
+                _this.showSourceMenu();
             }
 
             return _this.html;
         };
 
-        this.showPrompt = function () {
-            var input = $('<div style="padding:1.5em;color:#aaa;">'
-                + 'Відкрийте картку фільму і натисніть <b style="color:#e5a00d">UA Онлайн</b>.</div>');
-            _this.html.find('.info__body, .ua-page').html(input);
+        this.body = function () {
+            var b = _this.html.find('.info__body');
+            return b.length ? b : _this.html;
+        };
+
+        // Показати меню вибору джерела (при відкритті через головне меню без запиту)
+        this.showSourceMenu = function () {
+            var wrap = $('<div class="uaf-sourcemenu"></div>');
+
+            wrap.append('<div class="uaf-sourcetitle">Оберіть джерело:</div>');
+
+            SOURCES.forEach(function (src) {
+                var btn = $('<div class="uaf-srcbtn selector" style="border-color:' + src.color + '">'
+                    + '<span style="color:' + src.color + '">' + src.name + '</span>'
+                    + '<small>' + src.browse + '</small>'
+                    + '</div>');
+
+                btn.on('hover:enter click', function () {
+                    Lampa.Activity.push({
+                        url:       '',
+                        title:     src.name + ' – фільми',
+                        component: PLUGIN_NAME,
+                        movie:     {},
+                        mode:      'browse',
+                        source:    src,
+                        page:      1
+                    });
+                });
+
+                wrap.append(btn);
+            });
+
+            _this.body().html(wrap);
+            Lampa.Controller.enable('content');
+        };
+
+        this.doBrowse = function (src) {
+            fetchHtml(
+                src.browse,
+                function (html) { _this.render(parseItems(html, src)); },
+                function ()     { _this.render([]); }
+            );
         };
 
         this.doSearch = function () {
@@ -140,12 +199,10 @@
                     src.search + encodeURIComponent(query),
                     function (html) {
                         all = all.concat(parseItems(html, src));
-                        done++;
-                        if (done === SOURCES.length) _this.render(all);
+                        if (++done === SOURCES.length) _this.render(all);
                     },
                     function () {
-                        done++;
-                        if (done === SOURCES.length) _this.render(all);
+                        if (++done === SOURCES.length) _this.render(all);
                     }
                 );
             });
@@ -154,36 +211,34 @@
         this.render = function (results) {
             if (!_this.html) return;
 
-            var container = _this.html.find('.info__body, .ua-page');
+            var container = _this.body();
             container.html('');
 
             if (!results.length) {
-                container.html('<div class="ua-empty">Нічого не знайдено</div>');
+                container.html('<div class="uaf-empty">😕 Нічого не знайдено</div>');
                 return;
             }
 
-            var wrap = $('<div class="ua-results"></div>');
+            var wrap = $('<div class="uaf-grid"></div>');
+
             results.forEach(function (item) {
                 var poster = item.poster
-                    ? '<img class="ua-poster" src="' + item.poster + '" />'
-                    : '<div class="ua-noposter"></div>';
+                    ? '<img class="uaf-poster" src="' + item.poster + '" loading="lazy" />'
+                    : '<div class="uaf-noposter">🎬</div>';
 
                 var card = $(
-                    '<div class="ua-card selector">'
+                    '<div class="uaf-card selector">'
                     + poster
-                    + '<div class="ua-info">'
-                    +   '<div class="ua-title">' + (item.title || '') + '</div>'
-                    +   '<div class="ua-badge" style="background:' + item.source.color + '">'
+                    + '<div class="uaf-meta">'
+                    +   '<div class="uaf-title">' + item.title + '</div>'
+                    +   '<span class="uaf-badge" style="background:' + item.source.color + '">'
                     +     item.source.name
-                    +   '</div>'
+                    +   '</span>'
                     + '</div>'
                     + '</div>'
                 );
 
-                card.on('hover:enter click', function () {
-                    _this.openItem(item);
-                });
-
+                card.on('hover:enter click', function () { _this.openItem(item); });
                 wrap.append(card);
             });
 
@@ -192,23 +247,20 @@
         };
 
         this.openItem = function (item) {
-            Lampa.Noty.show('Завантаження…');
+            Lampa.Noty.show('⏳ Завантаження сторінки…');
             fetchHtml(
                 item.url,
                 function (html) {
                     var playerUrl = extractPlayer(html);
                     if (playerUrl) {
-                        Lampa.Player.play({
-                            title: item.title,
-                            url:   playerUrl
-                        });
+                        Lampa.Player.play({ title: item.title, url: playerUrl });
                     } else {
-                        Lampa.Noty.show('Плеєр не знайдено. Відкриваємо у браузері…');
+                        Lampa.Noty.show('⚠️ Плеєр не знайдено. Спроба відкрити у браузері…');
                         try { window.open(item.url, '_blank'); } catch (e) {}
                     }
                 },
                 function () {
-                    Lampa.Noty.show('Помилка завантаження сторінки');
+                    Lampa.Noty.show('❌ Помилка завантаження сторінки');
                 }
             );
         };
@@ -219,29 +271,41 @@
         this.destroy = function () { _this.html = null; };
     }
 
-    // ─── CSS ─────────────────────────────────────────────────────────────────
+    // ─── Стилі ────────────────────────────────────────────────────────────────
 
     function addStyles() {
         var css = [
-            '.ua-page{padding:.5em}',
-            '.ua-loading,.ua-empty{color:#aaa;font-size:1em;padding:1.5em;text-align:center}',
-            '.ua-results{display:flex;flex-wrap:wrap;gap:.7em;padding:.7em}',
-            '.ua-card{width:148px;border-radius:8px;overflow:hidden;cursor:pointer;',
-            '  background:#1c1c2e;border:2px solid transparent;',
+            '.uaf-page{padding:.6em}',
+            '.uaf-loading,.uaf-empty{color:#aaa;font-size:1em;padding:2em;text-align:center}',
+
+            /* Меню джерел */
+            '.uaf-sourcemenu{display:flex;flex-direction:column;gap:.8em;padding:1.2em;max-width:480px}',
+            '.uaf-sourcetitle{color:#aaa;font-size:.9em;margin-bottom:.3em}',
+            '.uaf-srcbtn{padding:.9em 1.2em;border-radius:10px;border:2px solid;',
+            '  background:#1a1a2e;cursor:pointer;transition:transform .15s,background .15s}',
+            '.uaf-srcbtn span{display:block;font-size:1em;font-weight:700;margin-bottom:.2em}',
+            '.uaf-srcbtn small{display:block;font-size:.72em;color:#888}',
+            '.uaf-srcbtn.focus,.uaf-srcbtn:hover{background:#252545;transform:scale(1.02)}',
+
+            /* Сітка карток */
+            '.uaf-grid{display:flex;flex-wrap:wrap;gap:.8em;padding:.8em}',
+            '.uaf-card{width:150px;border-radius:8px;overflow:hidden;cursor:pointer;',
+            '  background:#1a1a2e;border:2px solid transparent;',
             '  transition:transform .15s,border-color .15s;flex-shrink:0}',
-            '.ua-card.focus,.ua-card:hover{transform:scale(1.05);border-color:#e5a00d}',
-            '.ua-poster{width:100%;height:210px;object-fit:cover;display:block}',
-            '.ua-noposter{width:100%;height:210px;background:#2a2a4a}',
-            '.ua-info{padding:5px}',
-            '.ua-title{font-size:.76em;color:#fff;line-height:1.3;',
-            '  max-height:2.6em;overflow:hidden;margin-bottom:4px}',
-            '.ua-badge{display:inline-block;font-size:.63em;',
-            '  padding:2px 6px;border-radius:4px;color:#fff;font-weight:700}'
+            '.uaf-card.focus,.uaf-card:hover{transform:scale(1.06);border-color:#e5a00d}',
+            '.uaf-poster{width:100%;height:215px;object-fit:cover;display:block}',
+            '.uaf-noposter{width:100%;height:215px;background:#2a2a4a;',
+            '  display:flex;align-items:center;justify-content:center;font-size:2em}',
+            '.uaf-meta{padding:6px}',
+            '.uaf-title{font-size:.75em;color:#fff;line-height:1.3;',
+            '  max-height:2.6em;overflow:hidden;margin-bottom:5px}',
+            '.uaf-badge{display:inline-block;font-size:.62em;',
+            '  padding:2px 7px;border-radius:4px;color:#fff;font-weight:700}'
         ].join('');
 
-        if (!document.getElementById('ua-sources-style')) {
+        if (!document.getElementById('uaf-style')) {
             var el = document.createElement('style');
-            el.id  = 'ua-sources-style';
+            el.id  = 'uaf-style';
             el.textContent = css;
             document.head.appendChild(el);
         }
@@ -250,33 +314,31 @@
     // ─── Кнопка на картці фільму ─────────────────────────────────────────────
 
     function addFullButton() {
-        // 'full' – подія Lampa; тип 'complite' (так, з однією 'i' — це оригінальний опечаток в Lampa)
         Lampa.Listener.follow('full', function (e) {
             if (e.type !== 'complite') return;
 
-            var movie = e.data.movie;
+            var movie = e.data && e.data.movie;
             if (!movie) return;
 
             var btn = $('<div class="full-start__button selector">'
                 + '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"'
-                + ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
-                + ' stroke-linejoin="round">'
+                + ' stroke="currentColor" stroke-width="2" stroke-linecap="round">'
                 + '<polygon points="5 3 19 12 5 21 5 3"/>'
                 + '</svg>'
-                + '<span>UA Онлайн</span>'
+                + '<span>UA Фільми</span>'
                 + '</div>');
 
             btn.on('hover:enter click', function () {
                 Lampa.Activity.push({
                     url:       '',
-                    title:     'UA Онлайн: ' + (movie.title || movie.original_title || ''),
+                    title:     'UA Фільми: ' + (movie.title || movie.original_title || ''),
                     component: PLUGIN_NAME,
                     movie:     movie,
+                    mode:      'search',
                     page:      1
                 });
             });
 
-            // Знаходимо контейнер кнопок; пробуємо кілька варіантів
             var holder = e.object.find('.full-start__buttons');
             if (!holder.length) holder = e.object.find('.full-start');
             if (holder.length) holder.prepend(btn);
@@ -286,7 +348,6 @@
     // ─── Пункт у головному меню ──────────────────────────────────────────────
 
     function addMenuItem() {
-        // Подія 'menu' з типом 'render'
         Lampa.Listener.follow('menu', function (e) {
             if (e.type !== 'render') return;
 
@@ -298,15 +359,16 @@
                 + '<polyline points="17 2 12 7 7 2"/>'
                 + '</svg>'
                 + '</div>'
-                + '<div class="menu__text">UA Онлайн</div>'
+                + '<div class="menu__text">UA Фільми</div>'
                 + '</li>');
 
             item.on('hover:enter click', function () {
                 Lampa.Activity.push({
                     url:       '',
-                    title:     'UA Онлайн – пошук',
+                    title:     'UA Фільми',
                     component: PLUGIN_NAME,
                     movie:     {},
+                    mode:      'menu',
                     page:      1
                 });
                 Lampa.Controller.toggle('content');
@@ -321,16 +383,15 @@
 
     function init() {
         addStyles();
-        Lampa.Component.add(PLUGIN_NAME, SearchComponent);
+        Lampa.Component.add(PLUGIN_NAME, FilmsComponent);
         addFullButton();
         addMenuItem();
-        console.log('[UA Sources] ✅ плагін завантажено');
+        console.log('[UA Films] ✅ плагін завантажено');
         setTimeout(function () {
-            Lampa.Noty && Lampa.Noty.show('✅ UA Sources завантажено');
+            Lampa.Noty && Lampa.Noty.show('✅ UA Films завантажено');
         }, 2000);
     }
 
-    // Перевіряємо готовність Lampa (може завантажуватись після нас)
     var timer = setInterval(function () {
         if (window.Lampa && Lampa.Listener && Lampa.Component && Lampa.Activity) {
             clearInterval(timer);
@@ -338,7 +399,6 @@
         }
     }, 300);
 
-    // Максимальний таймаут 30 сек
     setTimeout(function () { clearInterval(timer); }, 30000);
 
 })();
