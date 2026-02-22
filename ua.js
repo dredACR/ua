@@ -182,4 +182,135 @@
             '.uaf-poster{width:100%;height:215px;object-fit:cover;display:block}',
             '.uaf-noposter{width:100%;height:215px;background:#2a2a4a;display:flex;align-items:center;justify-content:center;font-size:2em}',
             '.uaf-meta{padding:6px}',
-            '.uaf-title{font-size:.75em;color:#fff;line-height:1.3;max-height:
+            '.uaf-title{font-size:.75em;color:#fff;line-height:1.3;max-height:2.6em;overflow:hidden;margin-bottom:5px}',
+            '.uaf-badge{display:inline-block;font-size:.62em;padding:2px 7px;border-radius:4px;color:#fff;font-weight:700}'
+        ].join('');
+        if (!document.getElementById('uaf-style')) {
+            var el = document.createElement('style');
+            el.id = 'uaf-style';
+            el.textContent = css;
+            document.head.appendChild(el);
+        }
+    }
+
+    // ─── ГОЛОВНЕ: реєстрація через подію 'online' ────────────────────────────
+    // Саме так працюють всі онлайн-плагіни (MOD's, online_mod тощо)
+    // Lampa генерує цю подію коли відкривається меню "Дивитися" на картці
+
+    function registerOnlineSource() {
+        Lampa.Listener.follow('online', function (e) {
+            if (e.type !== 'start') return;
+
+            var item   = e.item || {};   // дані картки фільму
+            var button = e.button;       // функція для додавання кнопки
+
+            // button() — це функція яку Lampa надає для реєстрації кнопок
+            // Якщо вона є — використовуємо її
+            if (typeof button === 'function') {
+                button({
+                    title:    'UA Фільми',
+                    subtitle: 'UA Serials · KinoUkr · UA Kino',
+                    noimage:  true,
+                    onclick:  function () {
+                        Lampa.Activity.push({
+                            url:       '',
+                            title:     'UA Фільми: ' + (item.title || item.original_title || ''),
+                            component: PLUGIN_NAME,
+                            movie:     item,
+                            page:      1
+                        });
+                    }
+                });
+            }
+        });
+
+        // Також слухаємо подію 'full' з усіма можливими типами —
+        // для сумісності зі старими версіями Lampa
+        Lampa.Listener.follow('full', function (e) {
+            // Перевіряємо різні варіанти назви типу події
+            if (e.type !== 'complite' && e.type !== 'complete' && e.type !== 'render') return;
+
+            var movie  = null;
+            var object = null;
+
+            // Різні версії Lampa передають дані по-різному
+            if (e.data && e.data.movie) { movie = e.data.movie; object = e.object || (e.data && e.data.object); }
+            else if (e.movie)           { movie = e.movie;      object = e.object; }
+
+            if (!movie || !object) return;
+
+            var jObj = $(object);
+
+            // Не додаємо двічі
+            if (jObj.find('.ua-films-btn').length) return;
+
+            var btn = $('<div class="full-start__button selector ua-films-btn">'
+                + '<span>UA Фільми</span></div>');
+
+            btn.on('hover:enter click', function () {
+                Lampa.Activity.push({
+                    url:       '',
+                    title:     'UA Фільми: ' + (movie.title || movie.original_title || ''),
+                    component: PLUGIN_NAME,
+                    movie:     movie,
+                    page:      1
+                });
+            });
+
+            var holder = jObj.find('.full-start__buttons, .full-start__footer');
+            if (!holder.length) holder = jObj.find('.full-start');
+            if (holder.length) holder.first().prepend(btn);
+        });
+    }
+
+    // ─── Пункт у бічному меню ────────────────────────────────────────────────
+
+    function addMenuItem() {
+        Lampa.Listener.follow('menu', function (e) {
+            if (e.type !== 'render') return;
+            var item = $('<li class="menu__item selector">'
+                + '<div class="menu__ico">'
+                + '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+                + '<rect x="2" y="7" width="20" height="15" rx="2"/>'
+                + '<polyline points="17 2 12 7 7 2"/>'
+                + '</svg></div>'
+                + '<div class="menu__text">UA Фільми</div>'
+                + '</li>');
+            item.on('hover:enter click', function () {
+                Lampa.Activity.push({
+                    url:       '',
+                    title:     'UA Фільми – пошук',
+                    component: PLUGIN_NAME,
+                    movie:     { title: '' },
+                    page:      1
+                });
+                Lampa.Controller.toggle('content');
+            });
+            var list = $(e.body).find('.menu__list');
+            if (list.length) list.append(item);
+        });
+    }
+
+    // ─── Ініціалізація ───────────────────────────────────────────────────────
+
+    function init() {
+        addStyles();
+        Lampa.Component.add(PLUGIN_NAME, FilmsComponent);
+        registerOnlineSource();
+        addMenuItem();
+        console.log('[UA Films] плагін завантажено');
+        setTimeout(function () {
+            Lampa.Noty && Lampa.Noty.show('✅ UA Films завантажено');
+        }, 1500);
+    }
+
+    var timer = setInterval(function () {
+        if (window.Lampa && Lampa.Listener && Lampa.Component && Lampa.Activity) {
+            clearInterval(timer);
+            init();
+        }
+    }, 300);
+
+    setTimeout(function () { clearInterval(timer); }, 30000);
+
+})();
